@@ -1,0 +1,166 @@
+﻿@page "/"
+@using Microsoft.EntityFrameworkCore
+@using PetWorld.Application.Interfaces
+@using PetWorld.Core.Entities
+@using PetWorld.Infrastructure.Data
+@inject IAgentService Agent
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<!--
+    DESIGN PHILOSOPHY:
+    - Split-screen layout: Chat (left) + Live Inventory (right)
+    - Shows real-time product catalog that AI uses for grounding
+    - Expandable logs for transparency (recruiter can see Writer-Critic iterations)
+-->
+
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">Assistant</div>
+                <div class="card-body">
+                    <div class="input-group mb-3">
+                        <input @bind="Input" class="form-control" placeholder="Ask about products..."
+                               @onkeyup="HandleKeyUp" />
+                        <button @onclick="Ask" class="btn btn-dark" disabled="@IsLoading">Send</button>
+                    </div>
+
+                    @if (IsLoading)
+                    {
+                        <div class="spinner-border text-primary" role="status"></div>
+                    }
+
+                    @if (Session != null)
+                    {
+                        <div class="alert alert-secondary"><strong>Q:</strong> @Session.UserQuestion</div>
+                        <div class="alert alert-success"><strong>A:</strong> @Session.FinalAnswer</div>
+
+                        <details class="mt-2">
+                            <summary class="text-muted small">Logs (@Session.Iterations iterations)</summary>
+                            <ul class="list-group mt-2">
+                                @foreach (var log in Session.Logs)
+                                {
+                                    <li class="list-group-item small">
+                                        <strong>@log.AgentRole:</strong> @log.Content
+                                    </li>
+                                }
+                            </ul>
+                        </details>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header bg-success text-white">Inventory</div>
+                <div class="list-group list-group-flush" style="max-height: 500px; overflow-y: auto;">
+                    @if (Products.Count == 0)
+                    {
+                        <div class="list-group-item text-muted small">No products loaded yet.</div>
+                    }
+                    else
+                    {
+                        @foreach (var p in Products)
+                        {
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>@p.Name</span>
+                                <span class="badge bg-secondary">@p.Price PLN</span>
+                            </div>
+                        }
+                    }
+                </div>
+                <div class="card-footer d-flex justify-content-between">
+                    <button class="btn btn-sm btn-outline-success" @onclick="ReloadProducts" disabled="@IsLoadingProducts">
+                        @(IsLoadingProducts ? "Loading..." : "Refresh")
+                    </button>
+                    <span class="text-muted small">@LastInventoryStatus</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    string Input = "";
+    bool IsLoading = false;
+    ChatSession? Session;
+
+    List<Product> Products = new();
+    bool IsLoadingProducts = false;
+    string LastInventoryStatus = "";
+
+    /// <summary>
+    /// Load products on component initialization.
+    /// WHY: Shows user what data AI has access to (transparency).
+    /// </summary>
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadProducts();
+    }
+
+    /// <summary>
+    /// Reloads product catalog from database.
+    /// WHY DbContextFactory: Thread-safe in Blazor Server (SignalR).
+    /// </summary>
+    async Task ReloadProducts()
+    {
+        IsLoadingProducts = true;
+        try
+        {
+            using var ctx = await DbFactory.CreateDbContextAsync();
+            Products = await ctx.Products.AsNoTracking()
+                .OrderBy(p => p.Category)
+                .ThenBy(p => p.Name)
+                .ToListAsync();
+
+            LastInventoryStatus = $"Loaded: {Products.Count} products";
+        }
+        catch (Exception ex)
+        {
+            LastInventoryStatus = "Database not ready";
+            Console.WriteLine($"[UI] Inventory load failed: {ex.Message}");
+        }
+        finally
+        {
+            IsLoadingProducts = false;
+        }
+    }
+
+    /// <summary>
+    /// Sends user question to AI agent.
+    /// Triggers Writer-Critic loop (may take 5-15 seconds).
+    /// </summary>
+    async Task Ask()
+    {
+        if (string.IsNullOrWhiteSpace(Input))
+            return;
+
+        IsLoading = true;
+        try
+        {
+            Session = await Agent.ProcessRequestAsync(Input);
+            Input = ""; // Clear input after successful submission
+        }
+        catch (Exception ex)
+        {
+            // Show error to user (production: use toast notification)
+            Session = new ChatSession
+            {
+                UserQuestion = Input,
+                FinalAnswer = $"Error: {ex.Message}",
+                Iterations = 0
+            };
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Allows Enter key to submit question.
+    /// </summary>
+    Task HandleKeyUp(KeyboardEventArgs e)
+        => e.Key == "Enter" ? Ask() : Task.CompletedTask;
+}
