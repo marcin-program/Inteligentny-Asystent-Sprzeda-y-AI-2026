@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PetWorld.Application/PetWorld.Application.csproj" />
+    <Project Path="src/PetWorld.Core/PetWorld.Core.csproj" />
+    <Project Path="src/PetWorld.Infrastructure/PetWorld.Infrastructure.csproj" />
+    <Project Path="src/PetWorld.WebUI/PetWorld.WebUI.csproj" />
+  </Folder>
+</Solution>

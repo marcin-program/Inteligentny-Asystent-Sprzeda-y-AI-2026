@@ -1,0 +1,32 @@
+﻿# Docker Compose configuration for PetWorld AI
+# Services: MySQL database + .NET application
+
+services:
+  app:
+    build: .
+    ports:
+      - "5000:8080"  # Map host:5000 -> container:8080
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy  # Wait for MySQL to be ready
+    environment:
+      - ASPNETCORE_URLS=http://+:8080
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: petworld
+    volumes:
+      - petworld_db:/var/lib/mysql  # Persist data between restarts
+    healthcheck:
+      # WHY HEALTHCHECK: Prevents app from starting before DB is ready
+      # Avoids connection errors during startup
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  petworld_db:  # Named volume for database persistence
